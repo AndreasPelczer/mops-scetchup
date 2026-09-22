@@ -76,12 +76,35 @@ module DeadRabbit
              else
                ent.typename
              end
+      # 🔴 Raphael am 22.09.: "wir streiten um volumenkoerper die er braucht,
+      # komponenten werden gezaehlt, gruppen nicht, mops wuerfel haben das
+      # nicht, mops nutzlos." Er hat recht — fuer Mengen ist genau das
+      # entscheidend:
+      #   Komponente -> zaehlbar (40 Instanzen = 40 Stueck)
+      #   Gruppe     -> jede fuer sich, nicht zaehlbar
+      #   Volumenkoerper -> hat ein Volumen, daraus wird die Menge in m³
+      # Ein Mops, der das nicht sagt, ist fuer einen Zeichner wertlos.
+      ist_komponente = ent.is_a?(Sketchup::ComponentInstance)
+      anzahl = (ent.respond_to?(:definition) && ent.definition) ?
+                 ent.definition.instances.length : 1
+      koerper = ent.respond_to?(:manifold?) ? ent.manifold? : false
+      volumen = nil
+      if koerper && ent.respond_to?(:volume)
+        roh = ent.volume                      # Kubikzoll
+        volumen = runde(roh / 61023.7440947323) if roh && roh > 0
+      end
+
       {
-        'name'     => name.to_s,
-        'laenge_m' => runde(b.width.to_m),
-        'breite_m' => runde(b.height.to_m),
-        'hoehe_m'  => runde(b.depth.to_m),
-        'wer'      => wer.downcase
+        'name'      => name.to_s,
+        'laenge_m'  => runde(b.width.to_m),
+        'breite_m'  => runde(b.height.to_m),
+        'hoehe_m'   => runde(b.depth.to_m),
+        'typ'       => ist_komponente ? 'Komponente' : 'Gruppe',
+        'zaehlbar'  => ist_komponente,
+        'anzahl'    => anzahl,
+        'koerper'   => koerper,
+        'volumen_m3' => volumen,
+        'wer'       => wer.downcase
       }
     end
 
@@ -214,6 +237,19 @@ module DeadRabbit
 
     def self.ergebnis_html(info, antwort, frage)
       gelesen = []
+      # 🔴 Zuerst das, wonach ein Zeichner fragt: zaehlbar? Koerper? Wieviel?
+      gelesen << ['Art', info['typ'] +
+                  (info['zaehlbar'] ? " · #{info['anzahl']}× im Modell"
+                                    : ' · nicht zählbar')]
+      gelesen << ['Volumen', info['koerper'] ?
+                  (info['volumen_m3'] ?
+                     "#{format('%g', info['volumen_m3']).tr('.', ',')} m³" \
+                     " je Stück" : 'Körper, aber kein Volumen lesbar')
+                  : 'KEIN Volumenkörper']
+      if info['koerper'] && info['volumen_m3'] && info['anzahl'].to_i > 1
+        gesamt = info['volumen_m3'] * info['anzahl'].to_i
+        gelesen << ['Gesamt', "#{format('%g', gesamt.round(3)).tr('.', ',')} m³"]
+      end
       gelesen << ['Geschoss', antwort['geschoss']]
       gelesen << ['Bauteil', antwort['art_klartext'] || antwort['art']]
       if antwort['dicke_m']
@@ -362,112 +398,6 @@ module DeadRabbit
       HTML
     end
 
-    # --- Beispiel: so sieht ein Name aus, den der Mops versteht --------------
-    # Andreas am 22.09.: „koennen wir mal eine Datei fuer ihn machen in SketchUp,
-    # damit er sieht was wir erwarten? an einem Stein oder so."
-    #
-    # Kein Dokument zum Lesen — Bauteile zum Anfassen. Sie entstehen in SEINEM
-    # Modell, er kann sie drehen, anklicken und den Mops-Knopf darauf druecken.
-    #
-    # Die Namen folgen seiner eigenen Konvention (ifc_namen). Das dritte Paar
-    # ist Absicht: derselbe Stuetzwinkel einmal ohne und einmal mit Guete —
-    # damit er den Unterschied sieht, statt ihn erklaert zu bekommen.
-    # 🔴 Nur Bauteile, die AUCH Quader sind.
-    # Am 22.09. hatte ich zwei Kloetze 'Stuetzwinkel' genannt. Raphael sofort:
-    # 'das sind keine stuetzwinkel was da sind'. Recht hat er — ein Name, der
-    # etwas anderes sagt als die Form, ist eine Luege in seiner eigenen
-    # Sprache. Wer den ganzen Tag zeichnet, merkt das in einer Sekunde.
-    BEISPIELE = [
-      ['EG_AW_Waende_365mm_PP4-0,50_KG 330.001_1', 2.0, 0.365, 2.75,
-       'Aussenwand — alles drin, das liest der Mops vollstaendig'],
-      ['EG_IW_Waende_115mm_PP2-0,40_KG 340.002_1', 1.6, 0.115, 2.75,
-       'Innenwand — dieselbe Ordnung, andere Dicke'],
-      ['EG_AW_Waende_240mm_KG 330.003_1', 1.6, 0.24, 2.75,
-       'Dieselbe Wand OHNE Guete — hier fehlt dem Mops etwas'],
-      ['Wand 24 aussen links', 1.6, 0.24, 2.75,
-       'Und so heisst sie, wenn niemand eine Ordnung benutzt'],
-    ].freeze
-
-    def self.beispiel_bauen
-      # 🔴 NIE ins offene Modell. Am 22.09. standen bei Raphael ploetzlich vier
-      # fremde Kloetze in seiner Arbeitsdatei — 'wo kommen die her, warum sind
-      # da 4 kloetze'. Wer in fremde Arbeit hineinschreibt ohne zu fragen,
-      # macht genau das kaputt, was er aufbauen will.
-      weiter = UI.messagebox(
-        "Ich mache ein NEUES leeres Fenster auf und stelle vier " \
-        "Beispiel-Waende hinein.\n\nDein jetziges Modell bleibt unberuehrt.",
-        MB_OKCANCEL)
-      return unless weiter == IDOK
-
-      Sketchup.file_new
-      model = Sketchup.active_model
-      model.start_operation('Mops-Beispiele', true)
-      ents = model.active_entities
-      x = 0.0
-      gebaut = []
-
-      BEISPIELE.each do |name, l, b, h, _hinweis|
-        grp = ents.add_group
-        flaeche = grp.entities.add_face(
-          [x.m, 0, 0], [(x + l).m, 0, 0], [(x + l).m, b.m, 0], [x.m, b.m, 0])
-        flaeche.pushpull(-h.m)
-        grp.name = name
-        grp.definition.name = name
-        gebaut << grp
-        x += l + 0.6
-      end
-
-      model.commit_operation
-      model.active_view.zoom(gebaut)
-      zeige_beispiel
-    end
-
-    def self.zeige_beispiel
-      unless defined?(UI::HtmlDialog)
-        UI.messagebox("Vier Beispiel-Bauteile stehen jetzt im Modell.\n" \
-                      'Markiere eines und druecke den Mops-Knopf.')
-        return
-      end
-      dlg = UI::HtmlDialog.new(
-        :dialog_title => 'So sieht ein Name aus, den ich verstehe',
-        :scrollable => true, :resizable => true,
-        :width => 760, :height => 560, :min_width => 520,
-        :preferences_key => 'com.deadrabbit.mops.beispiel'
-      )
-      zeilen = BEISPIELE.map { |name, _l, _b, _h, hinweis|
-        teile = name.split('_')
-        "<tr><td class=n>#{name}</td><td class=h>#{hinweis}</td></tr>"
-      }.join
-      dlg.set_html(<<-HTML)
-<!DOCTYPE html><html><head><meta charset="utf-8"><style>
- body{font:15px -apple-system,system-ui,sans-serif;margin:0;padding:24px;
-      background:#faf7f2;color:#2b2b2b}
- h1{font-size:20px;margin:0 0 4px}
- .unter{color:#8a8a8a;font-size:14px;margin-bottom:18px}
- table{border-collapse:collapse;width:100%}
- td{padding:10px 8px;border-bottom:1px solid #eee4d4;vertical-align:top}
- td.n{font-family:ui-monospace,Menlo,monospace;font-size:13px;color:#8a5a20;
-      white-space:nowrap}
- td.h{font-size:14px;color:#6b6b6b}
- .bau{background:#fff;border-radius:12px;padding:16px 18px;margin-top:18px;
-      font-size:15px;line-height:1.5}
- .bau b{color:#8a5a20}
-</style></head><body>
- <h1>Vier Bauteile stehen jetzt in deinem Modell</h1>
- <div class=unter>Markiere eines und druecke den Mops-Knopf — dann siehst du, was ankommt.</div>
- <table>#{zeilen}</table>
- <div class=bau>
-   Der Aufbau ist immer derselbe:<br>
-   <b>Geschoss</b>_<b>Bauteil</b>_Bezeichnung_<b>Dicke</b>_<b>Guete</b>_<b>KG&nbsp;Nummer</b>_lfd<br><br>
-   Geschoss: UG EG OG DG AB &middot; Bauteil: AW IW FT EB DK<br>
-   Alles andere darfst du nennen wie du willst — der Mops sucht nur diese Teile.
- </div>
-</body></html>
-      HTML
-      dlg.center
-      dlg.show
-    end
-
     # --- Die Frage: drei Knöpfe, ein Satz, wegklickbar -----------------------
     def self.zeige_frage(frage)
       if defined?(UI::HtmlDialog)
@@ -578,9 +508,11 @@ module DeadRabbit
         cmd.large_icon = icon
       end
 
-      # Zweiter Knopf: Raphael am 22.09. — „er will sehen was der mops an infos
-      # hat, benennung und definitionsnamen." Die ehrlichste Art, ihm den Mops
-      # zu zeigen: seine Namen, und daneben was davon ankommt.
+      # Kein zweiter Knopf mehr, nur ein Menueeintrag. Andreas am Abend des
+      # 22.09.: „das plugin hat 3 knoepfe und ist auch zu kompliziert."
+      # In der Leiste steht darum genau einer. Das Durchsehen bleibt
+      # erreichbar — Raphael hatte danach gefragt — aber es draengt sich
+      # nicht mehr auf, solange er zeichnet.
       cmd2 = UI::Command.new('Was weisst du über mein Modell?') {
         DeadRabbit::MopsScetchup.modell_durchsehen
       }
@@ -591,24 +523,12 @@ module DeadRabbit
         cmd2.large_icon = icon
       end
 
-      cmd3 = UI::Command.new('Zeig mir ein Beispiel') {
-        DeadRabbit::MopsScetchup.beispiel_bauen
-      }
-      cmd3.tooltip = 'Setzt vier richtig benannte Bauteile ins Modell'
-      cmd3.status_bar_text = 'Vier Beispiel-Bauteile zum Anfassen und Ausprobieren.'
-      if File.exist?(icon)
-        cmd3.small_icon = icon
-        cmd3.large_icon = icon
-      end
 
       menue = UI.menu('Extensions')
       menue.add_item(cmd)
       menue.add_item(cmd2)
-      menue.add_item(cmd3)
       toolbar = UI::Toolbar.new('Malmops')
       toolbar.add_item(cmd)
-      toolbar.add_item(cmd2)
-      toolbar.add_item(cmd3)
       toolbar.show
 
       @ui_ready = true

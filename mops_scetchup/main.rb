@@ -19,7 +19,10 @@ require 'json'
 module DeadRabbit
   module MopsScetchup
 
-    FAKE      = true                              # true = ohne Box, lokale Antwort
+    # Steht auf false: der echte Weg zur Box. Fehlt der Schluessel, sagt das
+    # Plugin genau das — statt still eine erfundene Antwort zu zeigen.
+    # Zum Vorfuehren ohne Box: auf true stellen.
+    FAKE      = false
     MOPS_URL  = 'http://mops-box:8080'.freeze     # Box über Tailscale
     DICT      = 'mops'.freeze                     # AttributeDictionary am Bauteil
     KONFIG    = File.join(Dir.home, '.mops-sketchup.json').freeze

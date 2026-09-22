@@ -372,18 +372,34 @@ module DeadRabbit
     # Die Namen folgen seiner eigenen Konvention (ifc_namen). Das dritte Paar
     # ist Absicht: derselbe Stuetzwinkel einmal ohne und einmal mit Guete —
     # damit er den Unterschied sieht, statt ihn erklaert zu bekommen.
+    # 🔴 Nur Bauteile, die AUCH Quader sind.
+    # Am 22.09. hatte ich zwei Kloetze 'Stuetzwinkel' genannt. Raphael sofort:
+    # 'das sind keine stuetzwinkel was da sind'. Recht hat er — ein Name, der
+    # etwas anderes sagt als die Form, ist eine Luege in seiner eigenen
+    # Sprache. Wer den ganzen Tag zeichnet, merkt das in einer Sekunde.
     BEISPIELE = [
       ['EG_AW_Waende_365mm_PP4-0,50_KG 330.001_1', 2.0, 0.365, 2.75,
-       'Aussenwand: Geschoss, Bauteil, Dicke, Guete, Kostengruppe'],
-      ['EG_IW_Waende_115mm_PP2-0,40_KG 340.002_1', 1.5, 0.115, 2.75,
-       'Innenwand: dieselbe Ordnung, andere Dicke'],
-      ['AB_FT_Stützwinkel L_995 B_120 H_550_KG 543.001_1', 0.995, 0.12, 0.55,
-       'Dein Stuetzwinkel — so wie er heute heisst'],
-      ['AB_FT_Stützwinkel L_995 B_120 H_550_C2530_KG 543.002_1', 0.995, 0.12, 0.55,
-       'Derselbe mit Guete — das ist der Unterschied'],
+       'Aussenwand — alles drin, das liest der Mops vollstaendig'],
+      ['EG_IW_Waende_115mm_PP2-0,40_KG 340.002_1', 1.6, 0.115, 2.75,
+       'Innenwand — dieselbe Ordnung, andere Dicke'],
+      ['EG_AW_Waende_240mm_KG 330.003_1', 1.6, 0.24, 2.75,
+       'Dieselbe Wand OHNE Guete — hier fehlt dem Mops etwas'],
+      ['Wand 24 aussen links', 1.6, 0.24, 2.75,
+       'Und so heisst sie, wenn niemand eine Ordnung benutzt'],
     ].freeze
 
     def self.beispiel_bauen
+      # 🔴 NIE ins offene Modell. Am 22.09. standen bei Raphael ploetzlich vier
+      # fremde Kloetze in seiner Arbeitsdatei — 'wo kommen die her, warum sind
+      # da 4 kloetze'. Wer in fremde Arbeit hineinschreibt ohne zu fragen,
+      # macht genau das kaputt, was er aufbauen will.
+      weiter = UI.messagebox(
+        "Ich mache ein NEUES leeres Fenster auf und stelle vier " \
+        "Beispiel-Waende hinein.\n\nDein jetziges Modell bleibt unberuehrt.",
+        MB_OKCANCEL)
+      return unless weiter == IDOK
+
+      Sketchup.file_new
       model = Sketchup.active_model
       model.start_operation('Mops-Beispiele', true)
       ents = model.active_entities

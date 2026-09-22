@@ -45,7 +45,7 @@ es und **nichts passiert, ohne Fehlermeldung**. Einmal auf „unbekannte zulasse
 `~/.mops-sketchup.json`, Rechte 600:
 
 ```json
-{ "url": "http://mops-box:8000", "schluessel": "...", "wer": "Raphael" }
+{ "url": "http://mops-box:8080", "schluessel": "...", "wer": "Raphael" }
 ```
 
 Ohne Schlüssel antwortet die Box **401**, ohne konfigurierten Schlüssel auf der Box

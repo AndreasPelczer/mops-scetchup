@@ -20,14 +20,14 @@ module DeadRabbit
   module MopsScetchup
 
     FAKE      = true                              # true = ohne Box, lokale Antwort
-    MOPS_URL  = 'http://mops-box:8000'.freeze     # Box über Tailscale
+    MOPS_URL  = 'http://mops-box:8080'.freeze     # Box über Tailscale
     DICT      = 'mops'.freeze                     # AttributeDictionary am Bauteil
     KONFIG    = File.join(Dir.home, '.mops-sketchup.json').freeze
     WER       = 'Raphael'.freeze
 
     # --- Konfiguration: URL und Schlüssel liegen NICHT im Repo ---------------
     # Der Schlüssel ist ein Geheimnis. Er kommt aus ~/.mops-sketchup.json:
-    #   { "url": "http://mops-box:8000", "schluessel": "...", "wer": "Raphael" }
+    #   { "url": "http://mops-box:8080", "schluessel": "...", "wer": "Raphael" }
     def self.konfig
       @konfig ||= begin
         if File.exist?(KONFIG)

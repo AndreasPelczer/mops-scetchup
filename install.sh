@@ -54,7 +54,7 @@ echo "✓ eingehängt"
 if [ ! -f "$KONFIG" ]; then
   cat > "$KONFIG" <<'JSON'
 {
-  "url": "http://mops-box:8000",
+  "url": "http://mops-box:8080",
   "schluessel": "HIER-DEN-SCHLUESSEL-EINTRAGEN",
   "wer": "Raphael"
 }

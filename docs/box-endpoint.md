@@ -39,7 +39,7 @@ Ohne konfigurierten Schlüssel antworten alle Routen **503** — nie offen.
 Auf Raphaels Rechner liegt er in `~/.mops-sketchup.json` (nicht im Repo):
 
 ```json
-{ "url": "http://mops-box:8000", "schluessel": "...", "wer": "Raphael" }
+{ "url": "http://mops-box:8080", "schluessel": "...", "wer": "Raphael" }
 ```
 
 ---

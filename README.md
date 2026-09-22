@@ -30,8 +30,12 @@ STLB-Matcher und keine Aufwandswerte — die liegen im iOS-Client. Also kommen
 
 Die `.rbz` doppelklicken bzw. in SketchUp über *Erweiterungen → Erweiterungs-Manager →
 Erweiterung installieren* wählen, dann SketchUp neu starten.
-🔴 Unsigniert: steht die Ladepolitik auf „nur signierte Erweiterungen", installiert er
-es und **nichts passiert, ohne Fehlermeldung**. Einmal auf „unbekannte zulassen" stellen.
+Unsigniert — theoretisch ein Problem, praktisch nicht: **auf Raphaels Mac laufen am
+22.09.2026 bereits 52 unsignierte Erweiterungen** (1001bit, die ganze `5d_auto_*`-Familie),
+und in seinen Einstellungen steht kein abweichender Politik-Eintrag. Nachgemessen, nicht
+aus der Doku geraten. Sollte auf einem anderen Rechner doch „nur signierte" eingestellt
+sein, wird installiert und **nichts passiert, ohne Fehlermeldung** — dann einmal auf
+„unbekannte zulassen" stellen.
 
 **Für Entwickler — mit Symlink, dann zieht `git pull` die Updates mit:**
 

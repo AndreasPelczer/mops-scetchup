@@ -398,6 +398,73 @@ module DeadRabbit
       UI.messagebox("Konnte den Mops nicht erreichen: #{e.message}")
     end
 
+    # --- Mitlesen beim Speichern – nur mit Raphaels Ja (13.10.2026) ----------
+    # Andreas: „er will nichts und doch alles." Darum: EINMAL fragen, beim ersten
+    # Speichern. Sagt er Ja, schickt jedes Speichern Namen + Mengen je Tag an die
+    # Box (höchstens alle 60 s), unten steht kurz „Mops hat mitgelesen".
+    # Sagt er Nein, passiert nie etwas. Abschalten jederzeit im Menü.
+    # Gemerkt in SketchUps eigenen Einstellungen, nicht im Modell.
+    MITLESEN = 'mitlesen'.freeze   # nil = nie gefragt, 'ja', 'nein'
+
+    def self.mitlesen
+      Sketchup.read_default('MopsScetchup', MITLESEN, nil)
+    end
+
+    def self.mitlesen_setzen(wert)
+      Sketchup.write_default('MopsScetchup', MITLESEN, wert)
+    end
+
+    def self.beim_speichern(model)
+      return if schluessel.empty?
+      if mitlesen.nil?
+        wahl = UI.messagebox("Soll der Mops ab jetzt beim Speichern mitlesen?\n\n" \
+                             "Dann schicke ich bei jedem Speichern deine Bauteilnamen und " \
+                             "die Mengen je Tag an die Box – damit das Büro fragen kann " \
+                             "„wieviel Schotter?“, ohne dass du was drückst.\n\n" \
+                             'Abschalten geht jederzeit unter Erweiterungen.', MB_YESNO)
+        mitlesen_setzen(wahl == IDYES ? 'ja' : 'nein')
+      end
+      leise_senden(model) if mitlesen == 'ja'
+    end
+
+    def self.leise_senden(model)
+      return if model.nil?
+      return if @zuletzt_leise && Time.now - @zuletzt_leise < 60
+      @zuletzt_leise = Time.now
+      namen = model.definitions.reject { |d| d.image? }.map { |d| d.name.to_s }
+      tags, gesehen = mengen_je_tag(model)
+      return if namen.empty? && tags.empty?
+      req = Sketchup::Http::Request.new(url + '/sketchup/modell', Sketchup::Http::POST)
+      req.headers = { 'Content-Type' => 'application/json',
+                      'X-Mops-Schluessel' => schluessel }
+      req.body = { 'namen' => namen, 'wer' => wer.downcase, 'tags' => tags,
+                   'gruppen_gesehen' => gesehen }.to_json
+      req.start do |_r, response|
+        Sketchup.status_text = response.status_code < 400 ? 'Mops hat mitgelesen.' : ''
+      end
+    rescue => e
+      puts "Malmops: mitlesen gescheitert: #{e.message}"
+    end
+
+    class Speicherwache < Sketchup::ModelObserver
+      def onSaveModel(model)
+        DeadRabbit::MopsScetchup.beim_speichern(model)
+      end
+    end
+
+    class Modellwache < Sketchup::AppObserver
+      def wache(model)
+        return if model.nil?
+        @wachen ||= {}
+        return if @wachen[model.object_id]
+        @wachen[model.object_id] = true
+        model.add_observer(Speicherwache.new)
+      end
+      def onNewModel(model);  wache(model); end
+      def onOpenModel(model); wache(model); end
+      def expectsStartupModelNotifications; true; end
+    end
+
     def self.zeige_modell(d)
       dlg = UI::HtmlDialog.new(
         :dialog_title => 'Was der Mops in deinem Modell sieht',
@@ -607,9 +674,20 @@ module DeadRabbit
       menue = UI.menu('Extensions')
       menue.add_item(cmd)
       menue.add_item(cmd2)
+      schalter = menue.add_item('Mops liest beim Speichern mit') {
+        m = DeadRabbit::MopsScetchup
+        m.mitlesen_setzen(m.mitlesen == 'ja' ? 'nein' : 'ja')
+      }
+      menue.set_validation_proc(schalter) {
+        DeadRabbit::MopsScetchup.mitlesen == 'ja' ? MF_CHECKED : MF_UNCHECKED
+      }
       toolbar = UI::Toolbar.new('Malmops')
       toolbar.add_item(cmd)
       toolbar.show
+
+      wache = Modellwache.new
+      Sketchup.add_observer(wache)
+      wache.wache(Sketchup.active_model)
 
       @ui_ready = true
     end

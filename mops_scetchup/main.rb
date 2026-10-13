@@ -304,10 +304,69 @@ module DeadRabbit
     end
 
     # --- Was weiss der Mops ueber das ganze Modell? --------------------------
+    # --- Mengen je Tag (13.10.2026) ------------------------------------------
+    # Raphael legt alles Gleiche auf EINEN Tag („Schotter 16/30") — so arbeitet
+    # man in SketchUp, der Tag sagt, WAS es ist. Der Mops las bisher nur Namen
+    # und meldete eine „Gruppe#12" auf diesem Tag als Lücke. Jetzt zählt er je
+    # Tag: Stück, geschlossene Körper und deren m³. Offene Gruppen (kein
+    # Volumenkörper) werden gezählt, aber nie geschätzt — eine geratene Menge
+    # sieht aus wie Wissen.
+    #
+    # Geschlossener Körper -> zählt, Volumen, nicht weiter hineinschauen.
+    # Offen mit Gruppen drin -> hineinschauen (Tag vererbt sich nach innen).
+    # Offen ohne Gruppen drin -> ein Stück „ohne Volumen".
+    def self.mengen_je_tag(model)
+      roh = model.layers[0]                       # „Untagged" (intern Layer0)
+      summe = Hash.new { |h, k| h[k] = { 'tag' => k, 'stueck' => 0, 'koerper' => 0,
+                                         'volumen_m3' => 0.0, 'offen' => 0 } }
+      gesehen = 0
+      besuche = lambda do |ents, eltern_tag, eltern_trafo, tiefe|
+        return if tiefe > 30
+        ents.each do |e|
+          next unless e.is_a?(Sketchup::Group) || e.is_a?(Sketchup::ComponentInstance)
+          gesehen += 1
+          tag = (e.layer.nil? || e.layer == roh) ? eltern_tag : e.layer.name.to_s
+          if e.manifold? && (v = e.volume) && v > 0
+            # e.volume kennt die eigene Skalierung; die der Eltern kommt dazu.
+            f = trafo_faktor(eltern_trafo)
+            z = summe[tag]
+            z['stueck'] += 1
+            z['koerper'] += 1
+            z['volumen_m3'] += v * f / 61023.7440947323
+          else
+            innen = e.definition.entities
+            if innen.any? { |x| x.is_a?(Sketchup::Group) || x.is_a?(Sketchup::ComponentInstance) }
+              besuche.call(innen, tag, eltern_trafo * e.transformation, tiefe + 1)
+            else
+              summe[tag]['stueck'] += 1
+              summe[tag]['offen'] += 1
+            end
+          end
+        end
+      end
+      besuche.call(model.entities, 'Ohne Tag', Geom::Transformation.new, 0)
+      liste = summe.values.map { |z| z.merge('volumen_m3' => runde(z['volumen_m3'])) }
+      [liste.sort_by { |z| z['tag'].downcase }, gesehen]
+    end
+
+    # Wie stark eine Verschachtelung das Volumen streckt (Betrag der Determinante).
+    def self.trafo_faktor(t)
+      a = t.to_a
+      (a[0] * (a[5] * a[10] - a[6] * a[9]) -
+       a[4] * (a[1] * a[10] - a[2] * a[9]) +
+       a[8] * (a[1] * a[6] - a[2] * a[5])).abs
+    end
+
     def self.modell_durchsehen
       model = Sketchup.active_model
       namen = model.definitions.reject { |d| d.image? }.map { |d| d.name.to_s }
-      if namen.empty?
+      tags, gesehen = begin
+                        mengen_je_tag(model)
+                      rescue => e
+                        puts "Malmops: Mengen je Tag gescheitert: #{e.message}"
+                        [[], 0]
+                      end
+      if namen.empty? && tags.empty?
         UI.messagebox('In diesem Modell sind keine Bauteile benannt.')
         return
       end
@@ -320,7 +379,8 @@ module DeadRabbit
       req = Sketchup::Http::Request.new(url + '/sketchup/modell', Sketchup::Http::POST)
       req.headers = { 'Content-Type' => 'application/json',
                       'X-Mops-Schluessel' => schluessel }
-      req.body = { 'namen' => namen, 'wer' => wer.downcase }.to_json
+      req.body = { 'namen' => namen, 'wer' => wer.downcase, 'tags' => tags,
+                   'gruppen_gesehen' => gesehen }.to_json
       req.start do |_r, response|
         begin
           Sketchup.status_text = ''
@@ -340,7 +400,7 @@ module DeadRabbit
 
     def self.zeige_modell(d)
       dlg = UI::HtmlDialog.new(
-        :dialog_title => 'Was der Mops aus deinen Namen liest',
+        :dialog_title => 'Was der Mops in deinem Modell sieht',
         :scrollable => true, :resizable => true,
         :width => 900, :height => 680, :min_width => 560, :min_height => 400,
         :preferences_key => 'com.deadrabbit.mops.modell'
@@ -369,10 +429,29 @@ module DeadRabbit
                 .select { |_k, v| v.to_i > 0 }
                 .map { |k, v| "<li><b>#{v}×</b> ohne #{k}</li>" }.join
 
+      zahl = ->(v) { format('%.2f', v.to_f).tr('.', ',') }
+      tags = (d['tags'] || []).map { |t|
+        offen = t['offen'].to_i > 0 ? "<span class=x>#{t['offen']} ohne Volumen</span>" : ''
+        "<tr><td><b>#{t['tag']}</b></td><td>#{t['stueck']}</td>" \
+        "<td>#{t['koerper'].to_i > 0 ? zahl.call(t['volumen_m3']) + ' m³' : '<span class=x>—</span>'}</td>" \
+        "<td>#{offen}</td></tr>"
+      }.join
+      tag_kasten = tags.empty? ? '' : <<-T
+ <h2>Mengen je Tag</h2>
+ <div class=unter>Gezählt nach deinen Tags. m³ nur aus geschlossenen Volumenkörpern — offene Gruppen zähle ich, schätze sie aber nicht.</div>
+ <table class=tags>
+  <tr><th>Tag</th><th>Stück</th><th>Volumen</th><th></th></tr>
+  #{tags}
+ </table>
+ <h2>Was ich aus deinen Namen lese</h2>
+      T
+
       <<-HTML
 <!DOCTYPE html><html><head><meta charset="utf-8"><style>
  body{font:14px -apple-system,system-ui,sans-serif;margin:0;padding:22px;
       background:#faf7f2;color:#2b2b2b}
+ h2{font-size:17px;margin:4px 0 4px}
+ table.tags{margin-bottom:26px;background:#fff;border-radius:12px}
  h1{font-size:21px;margin:0 0 4px}
  .unter{color:#8a8a8a;font-size:14px;margin-bottom:18px}
  table{border-collapse:collapse;width:100%;font-size:14px}
@@ -385,7 +464,8 @@ module DeadRabbit
  .kasten ul{margin:8px 0 0;padding-left:20px} .kasten li{margin:3px 0}
  .gut{color:#2f7d32;font-weight:600}
 </style></head><body>
- <h1>Was ich aus deinen Namen lese</h1>
+ <h1>Was ich in deinem Modell sehe</h1>
+ #{tag_kasten}
  <div class=unter>#{d['bauteile']} Bauteile von #{d['gesehen']} Namen im Modell</div>
  <div class=kasten>
    #{luecken.empty? ? "<span class=gut>Bei allen steht alles drin.</span>" : "<b>Was mir fehlt:</b><ul>#{luecken}</ul>"}

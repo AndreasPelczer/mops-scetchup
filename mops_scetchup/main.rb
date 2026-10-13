@@ -69,13 +69,7 @@ module DeadRabbit
     # Maße + Name aus dem Bauteil ziehen (SketchUp-Innenmaß = Zoll -> Meter).
     def self.masse(ent)
       b = ent.bounds
-      name = if ent.respond_to?(:definition) && ent.definition
-               ent.definition.name
-             elsif ent.respond_to?(:name) && !ent.name.to_s.empty?
-               ent.name
-             else
-               ent.typename
-             end
+      name = echter_name(ent) || ent.typename   # Raphaels Gruppenname, nicht „Gruppieren#38"
       # 🔴 Raphael am 22.09.: "wir streiten um volumenkoerper die er braucht,
       # komponenten werden gezaehlt, gruppen nicht, mops wuerfel haben das
       # nicht, mops nutzlos." Er hat recht — fuer Mengen ist genau das
@@ -315,38 +309,73 @@ module DeadRabbit
     # Geschlossener Körper -> zählt, Volumen, nicht weiter hineinschauen.
     # Offen mit Gruppen drin -> hineinschauen (Tag vererbt sich nach innen).
     # Offen ohne Gruppen drin -> ein Stück „ohne Volumen".
+    # 🔴 13.10.2026: Raphael benennt GRUPPEN. Der Name, den er vergibt, hängt an
+    # der einzelnen Gruppe (ent.name); dahinter steht intern „Gruppieren#38".
+    # Wir lasen den internen — und seine ganze Beschriftung kam nie an.
+    # Reihenfolge jetzt: eigener Name -> Name der Eltern-Gruppe -> Komponentenname.
+    AUTONAME = /\A(Gruppieren|Gruppe|Group|Komponente|Component)\s*#\d+\z/i
+
+    def self.echter_name(ent, eltern_name = nil)
+      eigen = ent.respond_to?(:name) ? ent.name.to_s.strip : ''
+      return eigen unless eigen.empty? || eigen =~ AUTONAME
+      return eltern_name if eltern_name
+      d = ent.respond_to?(:definition) && ent.definition ? ent.definition.name.to_s : ''
+      d.empty? || d =~ AUTONAME ? nil : d
+    end
+
+    # -> [tags, gesehen, teile]  teile = je (Name, Tag): Stück, m³, offen
     def self.mengen_je_tag(model)
       roh = model.layers[0]                       # „Untagged" (intern Layer0)
       summe = Hash.new { |h, k| h[k] = { 'tag' => k, 'stueck' => 0, 'koerper' => 0,
                                          'volumen_m3' => 0.0, 'offen' => 0 } }
+      teile = Hash.new { |h, k| h[k] = { 'name' => k[0], 'tag' => k[1], 'stueck' => 0,
+                                         'volumen_m3' => 0.0, 'offen' => 0 } }
       gesehen = 0
-      besuche = lambda do |ents, eltern_tag, eltern_trafo, tiefe|
+      besuche = lambda do |ents, eltern_tag, eltern_name, eltern_trafo, tiefe|
         return if tiefe > 30
         ents.each do |e|
           next unless e.is_a?(Sketchup::Group) || e.is_a?(Sketchup::ComponentInstance)
           gesehen += 1
           tag = (e.layer.nil? || e.layer == roh) ? eltern_tag : e.layer.name.to_s
+          name = echter_name(e, eltern_name)
           if e.manifold? && (v = e.volume) && v > 0
             # e.volume kennt die eigene Skalierung; die der Eltern kommt dazu.
-            f = trafo_faktor(eltern_trafo)
+            m3 = v * trafo_faktor(eltern_trafo) / 61023.7440947323
             z = summe[tag]
             z['stueck'] += 1
             z['koerper'] += 1
-            z['volumen_m3'] += v * f / 61023.7440947323
+            z['volumen_m3'] += m3
+            t = teile[[name || 'ohne Namen', tag]]
+            t['stueck'] += 1
+            t['volumen_m3'] += m3
           else
             innen = e.definition.entities
             if innen.any? { |x| x.is_a?(Sketchup::Group) || x.is_a?(Sketchup::ComponentInstance) }
-              besuche.call(innen, tag, eltern_trafo * e.transformation, tiefe + 1)
+              besuche.call(innen, tag, name, eltern_trafo * e.transformation, tiefe + 1)
             else
               summe[tag]['stueck'] += 1
               summe[tag]['offen'] += 1
+              t = teile[[name || 'ohne Namen', tag]]
+              t['stueck'] += 1
+              t['offen'] += 1
             end
           end
         end
       end
-      besuche.call(model.entities, 'Ohne Tag', Geom::Transformation.new, 0)
+      besuche.call(model.entities, 'Ohne Tag', nil, Geom::Transformation.new, 0)
       liste = summe.values.map { |z| z.merge('volumen_m3' => runde(z['volumen_m3'])) }
-      [liste.sort_by { |z| z['tag'].downcase }, gesehen]
+      tl = teile.values.map { |z| z.merge('volumen_m3' => runde(z['volumen_m3'])) }
+      [liste.sort_by { |z| z['tag'].downcase }, gesehen, tl.first(3000)]
+    end
+
+    # Was an die Box geht – EIN Ort für Knopf und Mitlesen.
+    def self.modell_paket(model)
+      tags, gesehen, teile = mengen_je_tag(model)
+      namen = (teile.map { |t| t['name'] } +
+               model.definitions.reject { |d| d.image? || d.group? }.map { |d| d.name.to_s })
+              .reject { |n| n.empty? || n == 'ohne Namen' || n =~ AUTONAME }.uniq
+      { 'namen' => namen, 'wer' => wer.downcase, 'tags' => tags, 'teile' => teile,
+        'gruppen_gesehen' => gesehen, 'modell' => model.title.to_s }
     end
 
     # Wie stark eine Verschachtelung das Volumen streckt (Betrag der Determinante).
@@ -359,14 +388,9 @@ module DeadRabbit
 
     def self.modell_durchsehen
       model = Sketchup.active_model
-      namen = model.definitions.reject { |d| d.image? }.map { |d| d.name.to_s }
-      tags, gesehen = begin
-                        mengen_je_tag(model)
-                      rescue => e
-                        puts "Malmops: Mengen je Tag gescheitert: #{e.message}"
-                        [[], 0]
-                      end
-      if namen.empty? && tags.empty?
+      paket = modell_paket(model)
+      namen = paket['namen']
+      if namen.empty? && paket['tags'].empty?
         UI.messagebox('In diesem Modell sind keine Bauteile benannt.')
         return
       end
@@ -379,8 +403,7 @@ module DeadRabbit
       req = Sketchup::Http::Request.new(url + '/sketchup/modell', Sketchup::Http::POST)
       req.headers = { 'Content-Type' => 'application/json',
                       'X-Mops-Schluessel' => schluessel }
-      req.body = { 'namen' => namen, 'wer' => wer.downcase, 'tags' => tags,
-                   'gruppen_gesehen' => gesehen }.to_json
+      req.body = paket.to_json
       req.start do |_r, response|
         begin
           Sketchup.status_text = ''
@@ -431,14 +454,12 @@ module DeadRabbit
       return if model.nil?
       return if @zuletzt_leise && Time.now - @zuletzt_leise < 60
       @zuletzt_leise = Time.now
-      namen = model.definitions.reject { |d| d.image? }.map { |d| d.name.to_s }
-      tags, gesehen = mengen_je_tag(model)
-      return if namen.empty? && tags.empty?
+      paket = modell_paket(model)
+      return if paket['namen'].empty? && paket['tags'].empty?
       req = Sketchup::Http::Request.new(url + '/sketchup/modell', Sketchup::Http::POST)
       req.headers = { 'Content-Type' => 'application/json',
                       'X-Mops-Schluessel' => schluessel }
-      req.body = { 'namen' => namen, 'wer' => wer.downcase, 'tags' => tags,
-                   'gruppen_gesehen' => gesehen }.to_json
+      req.body = paket.to_json
       req.start do |_r, response|
         Sketchup.status_text = response.status_code < 400 ? 'Mops hat mitgelesen.' : ''
       end
